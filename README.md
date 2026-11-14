@@ -55,7 +55,7 @@ show-update: true
 
 ## 小纸条
 
-`pieces/` 目录用于存放零散记录，详见 [`pieces/README.md`](pieces/README.md)。简要规则：
+`pieces/` 目录用于存放零散记录，详见 [`pieces/README.md`](pieces-README.md)。简要规则：
 
 - 文件名：`2026.md`、`2026.08.md` 或 `2026.08.29.md`。
 - 文件内每条记录以日期小标题开头：`## 2026-08-29 (21:30)`，时间可省略。
