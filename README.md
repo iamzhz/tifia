@@ -1,6 +1,6 @@
-# zolog
+# tifia
 
-iamzhz 的静态博客，使用 Python + Markdown 生成，部署在 GitHub Pages。
+静态博客生成器，使用 Python + Markdown。
 
 ## 本地构建
 
@@ -25,11 +25,38 @@ posts/            文章源文件（Markdown），支持任意层子目录
     <slug>/       文章附属资源（图片、SVG 等，会原样复制到 dist）
 pieces/           小纸条源文件，按日期命名（YYYY / YYYY.MM / YYYY.MM.DD）
 g.py              构建脚本
+tifia.json        站点配置
 styles.css        站点样式
 dist/             构建产物（自动生成）
 ```
 
 文章所在目录结构会原样映射到 `dist/`，例如 `posts/2026/foo.md` 会生成 `dist/2026/foo.html`。
+
+## 站点配置
+
+站点级配置放在脚本同目录的 `tifia.json`，`g.py` 启动时读取：
+
+```json
+{
+  "site_url": "https://example.com",
+  "site_title": "我的博客",
+  "site_description": "我的站点描述",
+  "rss_max_items": 10,
+  "pieces_page_char_budget": 6000,
+  "pieces_page_max_items": 20
+}
+```
+
+| 字段 | 说明 |
+| --- | --- |
+| `site_url` | 站点根地址，用于 canonical、RSS、sitemap、robots 及 404 页面的子路径推导 |
+| `site_title` | 站点名，用于 `<title>`、导航品牌、页脚与 OG 信息 |
+| `site_description` | 默认页面描述（文章未写 `description` 时使用） |
+| `rss_max_items` | `feed.xml` 最多输出的篇数 |
+| `pieces_page_char_budget` | 小纸条单页正文的字符预算 |
+| `pieces_page_max_items` | 小纸条单页最多条目数 |
+
+`feed.xml`、`sitemap.xml` 的地址以及站点的子路径均由 `site_url` 推导，无需单独配置。
 
 ## Front matter
 
@@ -55,7 +82,7 @@ show-update: true
 
 ## 小纸条
 
-`pieces/` 目录用于存放零散记录，详见 [`pieces/README.md`](pieces-README.md)。简要规则：
+`pieces/` 目录用于存放零散记录，详见 [`pieces-README.md`](pieces-README.md)。简要规则：
 
 - 文件名：`2026.md`、`2026.08.md` 或 `2026.08.29.md`。
 - 文件内每条记录以日期小标题开头：`## 2026-08-29 (21:30)`，时间可省略。
@@ -71,6 +98,3 @@ show-update: true
 - `sitemap.xml`、`robots.txt`
 - 文章附属资源与 `styles.css`
 
-## 部署
-
-推送到 `main` 分支后由 `.github/workflows/deploy.yaml` 自动构建并发布到 GitHub Pages。

@@ -1,0 +1,8 @@
+{
+  "site_url": "https://iamzhz.github.io/zolog",
+  "site_title": "iamzhz zolog",
+  "site_description": "iamzhz 的 blog",
+  "rss_max_items": 10,
+  "pieces_page_char_budget": 6000,
+  "pieces_page_max_items": 20
+}

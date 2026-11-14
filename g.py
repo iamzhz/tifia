@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import shutil
@@ -21,19 +22,23 @@ PIECES_DIR = os.path.join(BASE_DIR, 'pieces')
 DIST_DIR = os.path.join(BASE_DIR, 'dist')
 STYLES_PATH = os.path.join(BASE_DIR, 'styles.css')
 
-# 站点配置
-SITE_URL = "https://iamzhz.github.io/zolog"
-SITE_TITLE = "iamzhz zolog"
-SITE_DESCRIPTION = "iamzhz 的 blog"
+# 站点配置：从脚本同目录的 tifia.json 读取
+CONFIG_PATH = os.path.join(BASE_DIR, 'tifia.json')
+with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+    CONFIG = json.load(f)
+
+SITE_URL = CONFIG['site_url']
+SITE_TITLE = CONFIG['site_title']
+SITE_DESCRIPTION = CONFIG['site_description']
 FEED_URL = f"{SITE_URL.rstrip('/')}/feed.xml"
 SITEMAP_URL = f"{SITE_URL.rstrip('/')}/sitemap.xml"
 # 站点在域名下的子路径，例如 "/zolog/"；用于 404 页面这类无法使用相对路径的场景
 SITE_BASE_PATH = urlparse(SITE_URL).path.rstrip('/') + '/'
-RSS_MAX_ITEMS = 10  # 最多输出的篇数
+RSS_MAX_ITEMS = CONFIG['rss_max_items']  # 最多输出的篇数
 
 # 小纸条：按内容长度自动分页
-PIECES_PAGE_CHAR_BUDGET = 6000   # 单页正文的字符预算
-PIECES_PAGE_MAX_ITEMS = 20       # 单页最多条目数
+PIECES_PAGE_CHAR_BUDGET = CONFIG['pieces_page_char_budget']   # 单页正文的字符预算
+PIECES_PAGE_MAX_ITEMS = CONFIG['pieces_page_max_items']       # 单页最多条目数
 PIECE_FILE_RE = re.compile(r'^(\d{4})(?:\.(\d{2}))?(?:\.(\d{2}))?$')
 PIECE_HEADING_RE = re.compile(
     r'^(20\d{2})-(\d{2})-(\d{2})'
@@ -60,7 +65,7 @@ html_head = """<!DOCTYPE html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>iamzhz | {title}</title>
+    <title>{site_title} | {title}</title>
     <meta name="description" content="{description}">
     <link rel="canonical" href="{canonical}">
     <link rel="alternate" type="application/rss+xml" title="{site_title}" href="{feed_url}">
@@ -74,7 +79,7 @@ html_head = """<!DOCTYPE html>
 {katex_head}</head>
 <body>
     <nav class="shiro-nav">
-        <a href="{prefix}index.html" class="nav-brand">iamzhz<span>.</span></a>
+        <a href="{prefix}index.html" class="nav-brand">{site_title}<span>.</span></a>
 
         <ul class="nav-links">
             <li><a href="{prefix}index.html" class="{index_cls}">首页</a></li>
@@ -92,7 +97,7 @@ html_tail = """
     </main>
     <footer class="site-footer">
         <div class="footer-content">
-            <p>Powered by iamzhz</p>
+            <p>Powered by {site_title}</p>
         </div>
     </footer>
 </body>
@@ -121,13 +126,14 @@ def render_page(title: str, body_html: str, prefix: str = "",
     description = description or SITE_DESCRIPTION
     canonical = (f"{SITE_URL.rstrip('/')}/{canonical_path.lstrip('/')}"
                  if canonical_path else f"{SITE_URL.rstrip('/')}/")
+    site_title = html_escape(SITE_TITLE, quote=True)
 
     head = html_head.format(
         title=html_escape(title),
         description=html_escape(description, quote=True),
         canonical=html_escape(canonical, quote=True),
         og_type=og_type,
-        site_title=html_escape(SITE_TITLE, quote=True),
+        site_title=site_title,
         feed_url=html_escape(FEED_URL, quote=True),
         prefix=prefix,
         index_cls="active" if active_index else "",
@@ -136,7 +142,8 @@ def render_page(title: str, body_html: str, prefix: str = "",
         about_cls="active" if active_about else "",
         katex_head=KATEX_HEAD if needs_katex else "",
     )
-    return head + body_html + html_tail
+    tail = html_tail.format(site_title=site_title)
+    return head + body_html + tail
 
 
 def rel_url_to_fs_path(rel_url: str) -> str:
@@ -463,7 +470,7 @@ def generate_pieces(entries: list) -> list:
         html = render_page(
             title, body, prefix='../',
             active_pieces=True,
-            description='iamzhz 的零散小纸条',
+            description=f'{SITE_TITLE} 的零散小纸条',
             canonical_path=rel_url,
             needs_katex=needs_katex,
         )
