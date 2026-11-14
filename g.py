@@ -17,6 +17,7 @@ from pymdownx.arithmatex import ArithmatexExtension
 # 所有路径都基于脚本所在目录，避免依赖当前工作目录
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 POSTS_DIR = os.path.join(BASE_DIR, 'posts')
+PIECES_DIR = os.path.join(BASE_DIR, 'pieces')
 DIST_DIR = os.path.join(BASE_DIR, 'dist')
 STYLES_PATH = os.path.join(BASE_DIR, 'styles.css')
 
@@ -29,6 +30,17 @@ SITEMAP_URL = f"{SITE_URL.rstrip('/')}/sitemap.xml"
 # 站点在域名下的子路径，例如 "/zolog/"；用于 404 页面这类无法使用相对路径的场景
 SITE_BASE_PATH = urlparse(SITE_URL).path.rstrip('/') + '/'
 RSS_MAX_ITEMS = 10  # 最多输出的篇数
+
+# 小纸条：按内容长度自动分页
+PIECES_PAGE_CHAR_BUDGET = 6000   # 单页正文的字符预算
+PIECES_PAGE_MAX_ITEMS = 20       # 单页最多条目数
+PIECE_FILE_RE = re.compile(r'^(\d{4})(?:\.(\d{2}))?(?:\.(\d{2}))?$')
+PIECE_HEADING_RE = re.compile(
+    r'^(20\d{2})-(\d{2})-(\d{2})'
+    r'(?:\s*[（(]?\s*(\d{1,2}):(\d{2})\s*[）)]?)?'
+)
+# 看起来像日期但解析失败的小标题，用于给出明确报错
+PIECE_BAD_HEADING_RE = re.compile(r'^20\d{2}[-.]\d')
 
 # 文章日期统一按北京时间处理（无时区的日期视为北京时间）
 BEIJING_TZ = timezone(timedelta(hours=8))
@@ -67,6 +79,7 @@ html_head = """<!DOCTYPE html>
         <ul class="nav-links">
             <li><a href="{prefix}index.html" class="{index_cls}">首页</a></li>
             <li><a href="{prefix}tags.html" class="{tags_cls}">标签云</a></li>
+            <li><a href="{prefix}pieces/index.html" class="{pieces_cls}">小纸条</a></li>
             <li><a href="{prefix}about.html" class="{about_cls}">关于</a></li>
         </ul>
     </nav>
@@ -95,6 +108,7 @@ def get_file_content(filename: str) -> str:
 def render_page(title: str, body_html: str, prefix: str = "",
                 active_index: bool = False,
                 active_tags: bool = False,
+                active_pieces: bool = False,
                 active_about: bool = False,
                 description: str | None = None,
                 canonical_path: str = "",
@@ -118,6 +132,7 @@ def render_page(title: str, body_html: str, prefix: str = "",
         prefix=prefix,
         index_cls="active" if active_index else "",
         tags_cls="active" if active_tags else "",
+        pieces_cls="active" if active_pieces else "",
         about_cls="active" if active_about else "",
         katex_head=KATEX_HEAD if needs_katex else "",
     )
@@ -283,6 +298,182 @@ def generate_index_and_tags(all_posts):
                             canonical_path="tags.html"))
 
 
+def parse_piece_file_date(filename: str):
+    """解析小纸条文件名中的日期（YYYY / YYYY.MM / YYYY.MM.DD）。"""
+    stem = os.path.splitext(os.path.basename(filename))[0]
+    match = PIECE_FILE_RE.fullmatch(stem)
+    if not match:
+        return None
+    year = int(match.group(1))
+    month = int(match.group(2) or 1)
+    day = int(match.group(3) or 1)
+    try:
+        return datetime(year, month, day, tzinfo=BEIJING_TZ)
+    except ValueError:
+        return None
+
+
+def render_piece_markdown(text: str) -> str:
+    md = markdown.Markdown(extensions=[
+        'tables', 'fenced_code',
+        CodeHiliteExtension(linenums=False),
+        ArithmatexExtension(generic=True),
+    ])
+    return md.convert(text)
+
+
+def parse_piece_file(full_path: str, file_key: datetime) -> list:
+    """按日期小标题拆分单个小纸条文件。"""
+    entries = []
+    current = None
+
+    for lineno, line in enumerate(get_file_content(full_path).splitlines(), 1):
+        heading_match = re.match(r'^#{1,6}\s+(.*?)\s*#*\s*$', line)
+        if heading_match:
+            heading = heading_match.group(1).strip()
+            date_match = PIECE_HEADING_RE.match(heading)
+            if date_match:
+                year, month, day = (int(date_match.group(i)) for i in (1, 2, 3))
+                hour = int(date_match.group(4) or 0)
+                minute = int(date_match.group(5) or 0)
+                try:
+                    date = datetime(year, month, day, hour, minute, tzinfo=BEIJING_TZ)
+                except ValueError as e:
+                    raise ValueError(
+                        f"{full_path}:{lineno}: 无效的小纸条日期 {heading!r}"
+                    ) from e
+                current = {
+                    'date': date,
+                    'has_time': date_match.group(4) is not None,
+                    'file_key': file_key,
+                    'index': len(entries),
+                    'lines': [],
+                }
+                entries.append(current)
+                continue
+            if PIECE_BAD_HEADING_RE.match(heading):
+                raise ValueError(
+                    f"{full_path}:{lineno}: 无法解析小纸条日期标题 {heading!r}"
+                    "（应为 YYYY-MM-DD 或 YYYY-MM-DD HH:MM）"
+                )
+
+        if current is not None:
+            current['lines'].append(line)
+
+    for entry in entries:
+        body = "\n".join(entry.pop('lines')).strip()
+        entry['html'] = render_piece_markdown(body)
+        entry['text_length'] = len(body)
+
+    return entries
+
+
+def load_pieces() -> list:
+    """读取 pieces/ 下的所有小纸条，并按时间回溯式排序。"""
+    if not os.path.isdir(PIECES_DIR):
+        return []
+
+    entries = []
+    for name in sorted(os.listdir(PIECES_DIR)):
+        if not name.lower().endswith('.md') or name.lower() == 'readme.md':
+            continue
+        full_path = os.path.join(PIECES_DIR, name)
+        if not os.path.isfile(full_path):
+            continue
+        file_key = parse_piece_file_date(name)
+        if file_key is None:
+            print(f"警告: 跳过文件名不符合日期格式的小纸条: {name}", file=sys.stderr)
+            continue
+        entries.extend(parse_piece_file(full_path, file_key))
+
+    # 新的在前；同一时间按文件日期、文件内顺序倒序，保证结果稳定
+    entries.sort(
+        key=lambda e: (e['date'], e['file_key'], e['index']),
+        reverse=True,
+    )
+    return entries
+
+
+def paginate_pieces(entries: list) -> list:
+    """按字符预算和条目上限把条目动态切成若干页。"""
+    pages = []
+    current, current_len = [], 0
+    for entry in entries:
+        size = entry['text_length']
+        if current and (
+            current_len + size > PIECES_PAGE_CHAR_BUDGET
+            or len(current) >= PIECES_PAGE_MAX_ITEMS
+        ):
+            pages.append(current)
+            current, current_len = [], 0
+        current.append(entry)
+        current_len += size
+    if current or not pages:
+        pages.append(current)
+    return pages
+
+
+def render_piece(entry: dict) -> str:
+    fmt = '%Y-%m-%d %H:%M' if entry['has_time'] else '%Y-%m-%d'
+    display = entry['date'].strftime(fmt)
+    return f"""
+        <article class="piece">
+            <h2 class="piece-date"><time datetime="{entry['date'].isoformat()}">{display}</time></h2>
+            <div class="piece-body">{entry['html']}</div>
+        </article>
+        """
+
+
+def render_piece_pagination(page_no: int, total_pages: int) -> str:
+    if total_pages <= 1:
+        return ""
+    parts = []
+    if page_no > 1:
+        prev_href = 'index.html' if page_no == 2 else f'{page_no - 1}.html'
+        parts.append(f'<a href="{prev_href}" rel="prev">← 上一页</a>')
+    parts.append(f'<span class="pagination-info">第 {page_no} / {total_pages} 页</span>')
+    if page_no < total_pages:
+        parts.append(f'<a href="{page_no + 1}.html" rel="next">下一页 →</a>')
+    return '<nav class="pagination" aria-label="小纸条分页">' + ''.join(parts) + '</nav>'
+
+
+def generate_pieces(entries: list) -> list:
+    """生成 dist/pieces/index.html 及后续分页，返回所有页面 URL。"""
+    pages = paginate_pieces(entries)
+    out_dir = os.path.join(DIST_DIR, 'pieces')
+    os.makedirs(out_dir, exist_ok=True)
+    page_urls = []
+
+    for page_no, page_entries in enumerate(pages, 1):
+        filename = 'index.html' if page_no == 1 else f'{page_no}.html'
+        rel_url = f'pieces/{filename}'
+        page_urls.append(rel_url)
+        title = '小纸条' if page_no == 1 else f'小纸条 · 第 {page_no} 页'
+
+        body = '<h1>小纸条</h1>'
+        if not page_entries:
+            body += '<p>还没有小纸条。</p>'
+        body += '<div class="piece-list">'
+        for entry in page_entries:
+            body += render_piece(entry)
+        body += '</div>'
+        body += render_piece_pagination(page_no, len(pages))
+
+        needs_katex = any(KATEX_RE.search(e['html']) for e in page_entries)
+        html = render_page(
+            title, body, prefix='../',
+            active_pieces=True,
+            description='iamzhz 的零散小纸条',
+            canonical_path=rel_url,
+            needs_katex=needs_katex,
+        )
+        with open(os.path.join(out_dir, filename), 'w', encoding='utf-8') as f:
+            f.write(html)
+
+    print(f"小纸条已生成: {len(entries)} 条，共 {len(pages)} 页")
+    return page_urls
+
+
 def absolutize_html(html_text: str, base_url: str) -> str:
     """把正文里相对的 src/href 转成绝对地址，避免阅读器里图片/链接失效。"""
     def replace(match):
@@ -351,7 +542,7 @@ def generate_rss(posts_data, site_url, site_title, site_description):
     print(f"RSS feed 已生成（含全文，时间 UTC+8）：{feed_path}")
 
 
-def generate_sitemap(posts_data):
+def generate_sitemap(posts_data, extra_urls=()):
     """生成 sitemap.xml。"""
     entries = [
         (f"{SITE_URL.rstrip('/')}/", None),
@@ -360,6 +551,7 @@ def generate_sitemap(posts_data):
     entries.extend(
         (f"{SITE_URL.rstrip('/')}/{p['url']}", p['date']) for p in posts_data
     )
+    entries.extend((f"{SITE_URL.rstrip('/')}/{url}", None) for url in extra_urls)
 
     urls_xml = ""
     for url, dt_obj in entries:
@@ -423,12 +615,17 @@ def build_all():
 
     generate_index_and_tags(posts_data)
     generate_rss(posts_data, SITE_URL, SITE_TITLE, SITE_DESCRIPTION)
-    generate_sitemap(posts_data)
+
+    pieces_entries = load_pieces()
+    piece_urls = generate_pieces(pieces_entries)
+
+    generate_sitemap(posts_data, piece_urls)
     generate_404()
     generate_robots()
     shutil.copy2(STYLES_PATH, os.path.join(DIST_DIR, 'styles.css'))
 
-    print(f"\n构建完成! 共生成 {len(posts_data)} 篇文章，并已生成 feed.xml。")
+    print(f"\n构建完成! 共生成 {len(posts_data)} 篇文章、"
+          f"{len(pieces_entries)} 条小纸条，并已生成 feed.xml。")
 
 
 if __name__ == "__main__":

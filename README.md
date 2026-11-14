@@ -23,6 +23,7 @@ posts/            文章源文件（Markdown），支持任意层子目录
   <year>/
     <slug>.md
     <slug>/       文章附属资源（图片、SVG 等，会原样复制到 dist）
+pieces/           小纸条源文件，按日期命名（YYYY / YYYY.MM / YYYY.MM.DD）
 g.py              构建脚本
 styles.css        站点样式
 dist/             构建产物（自动生成）
@@ -52,11 +53,20 @@ show-update: true
 
 `posts/about.md` 会被识别为「关于」页：不参与首页列表和标签统计，也不进入 RSS（需配合 `show-update: false`）。
 
+## 小纸条
+
+`pieces/` 目录用于存放零散记录，详见 [`pieces/README.md`](pieces/README.md)。简要规则：
+
+- 文件名：`2026.md`、`2026.08.md` 或 `2026.08.29.md`。
+- 文件内每条记录以日期小标题开头：`## 2026-08-29 (21:30)`，时间可省略。
+- 所有条目按时间倒序合并，并按内容长度自动分页输出到 `dist/pieces/`。
+
 ## 构建产物
 
 `g.py` 每次构建会先清空 `dist/`，然后生成：
 
 - 各篇文章 HTML、`index.html`、`tags.html`、`404.html`
+- `pieces/index.html` 及分页文件（小纸条）
 - `feed.xml`（RSS 2.0 全文输出）
 - `sitemap.xml`、`robots.txt`
 - 文章附属资源与 `styles.css`
